@@ -8,17 +8,17 @@ app = Rack::Builder.new do
     use Manifest
   end
 
-  map "/meta" do
-    use Meta
-  end
+  #map "/meta" do
+  #  use Meta
+  #end
 
   map "/catalog" do
     use Catalog
   end
 
-  map "/stream" do
-    use Stream
-  end
+  #map "/stream" do
+  #  use Stream
+  #end
 
   run NotFound.new
 end.to_app

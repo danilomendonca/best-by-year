@@ -1,10 +1,11 @@
 require 'json'
 require 'uri'
+require 'cgi'
 require 'net/http'
 
 MANIFEST = {
   id: "danil0vsky.bestbyyear",
-  version: "1.0.0",
+  version: "2.0.0",
 
   name: "Danil0vsky Best By Year",
   description: "A simple and much needed movies/series filter by year and rating",
@@ -63,7 +64,7 @@ class Resource
     segments = env["PATH_INFO"][1..-1] # Remove the leading slash
       .sub(/\.\w+$/, '') # Remove extension if any
       .split("/")
-      .map { |seg| URI.decode(seg) }
+      .map { |seg| CGI.unescape(seg) }
 
     { type: segments[0], id: segments[1], extraArgs: segments[2..-1] }
   end

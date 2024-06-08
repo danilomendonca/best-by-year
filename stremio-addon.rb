@@ -40,7 +40,7 @@ MANIFEST = {
 
 OPTIONAL_META = [:posterShape, :background, :logo, :videos, :description, :releaseInfo, :imdbRating, :director, :cast, :dvdRelease, :released, :inTheaters, :certification, :runtime, :language, :country, :awards, :website, :isPeered]
 
-CINEMETA_YEAR_URL = 'https://v3-cinemeta.strem.io/catalog/%s/year/genre=%s.json'
+CINEMETA_YEAR_URL = 'https://cinemeta-catalogs.strem.io/year/catalog/%s/year/genre=%s.json'
 
 class NotFound
   def call(env)
@@ -95,6 +95,7 @@ class Catalog < Resource
         list = JSON.parse(res.body)["metas"]
         best = list.sort_by { |m| m["imdbRating"] || '0.0'  }.reverse
     else
+        p "failed to load catalog from Cinemeta"
         JSON.parse("[]") # failed to load catalog from Cinemeta
     end
   end

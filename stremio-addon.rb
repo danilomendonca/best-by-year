@@ -40,7 +40,7 @@ MANIFEST = {
 
 OPTIONAL_META = [:posterShape, :background, :logo, :videos, :description, :releaseInfo, :imdbRating, :director, :cast, :dvdRelease, :released, :inTheaters, :certification, :runtime, :language, :country, :awards, :website, :isPeered]
 
-CINEMETA_YEAR_URL = 'https://cinemeta-catalogs.strem.io/year/catalog/%s/year/genre=%s.json'
+CINEMETA_YEAR_URL = 'https://cinemeta-catalogs.strem.io/year/catalog/%s/year/genre=%s&skip=%s.json'
 
 class NotFound
   def call(env)
@@ -81,22 +81,33 @@ end
 class Catalog < Resource
   def call(env)
     args = parse_request(env)
-    year = args[:extraArgs].first.gsub(/genre=/, '')
+    # extract year and skip from extraArgs, e.g.: genre=2024&skip=44
+    firstArgs = args[:extraArgs].first
+    year = firstArgs&.match(/genre=(\d+)/)&.captures&.first || Time.now.year.to_s
+    skip = firstArgs&.match(/skip=(\d+)/)&.captures&.first || 0
     catalog = {metas: best_by_year(args[:type], year)}
 
     [200, @@headers, [catalog.to_json]]
   end
 
-
   def best_by_year(type, year=Time.now.year.to_s)
-    uri = URI(CINEMETA_YEAR_URL % [type, year])
-    res = Net::HTTP.get_response(uri)
-    if res.is_a?(Net::HTTPSuccess)
-        list = JSON.parse(res.body)["metas"]
-        best = list.sort_by { |m| m["imdbRating"] || '0.0'  }.reverse
-    else
-        p "failed to load catalog from Cinemeta"
-        JSON.parse("[]") # failed to load catalog from Cinemeta
+    # iterate over the catalog until we get all the items, 44 at a time, until we get an empty list
+    fulllist = []
+    skip = 0
+    loop do
+      uri = URI(CINEMETA_YEAR_URL % [type, year, skip])
+      res = Net::HTTP.get_response(uri)
+      if res.is_a?(Net::HTTPSuccess)
+          list = JSON.parse(res.body)["metas"]
+      else
+          JSON.parse("[]") # failed to load catalog from Cinemeta
+      end
+      break if list.empty?
+
+      fulllist += list
+      skip += 50
     end
+
+    fulllist.sort_by { |m| m["imdbRating"].to_i || '0.0'  }.reverse
   end
 end

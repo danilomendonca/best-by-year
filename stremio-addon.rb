@@ -3,6 +3,8 @@ require 'uri'
 require 'cgi'
 require 'net/http'
 
+CURRENT_YEAR_PLUS_ONE = Time.now.year + 1
+
 MANIFEST = {
   id: "danil0vsky.bestbyyear",
   version: "2.0.0",
@@ -18,7 +20,7 @@ MANIFEST = {
         id: "Best By Year",
         extra: [
             name: "genre",
-            options: (2000..Time.now.year).to_a.map(&:to_s).reverse,
+            options: (2000..CURRENT_YEAR_PLUS_ONE).to_a.map(&:to_s).reverse,
             isRequired: true
         ]
     },
@@ -27,7 +29,7 @@ MANIFEST = {
         id: "Hello, Ruby",
         extra: [
             name: "genre",
-            options: (2000..Time.now.year).to_a.map(&:to_s).reverse,
+            options: (2000..CURRENT_YEAR_PLUS_ONE).to_a.map(&:to_s).reverse,
             isRequired: true
         ]
     }

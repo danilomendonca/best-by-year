@@ -3,43 +3,8 @@ require 'uri'
 require 'cgi'
 require 'net/http'
 
-CURRENT_YEAR = Time.now.year
-FIRST_YEAR = CURRENT_YEAR - 20
-
-MANIFEST = {
-  id: "danil0vsky.bestbyyear",
-  version: "2.0.0",
-
-  name: "Danil0vsky Best By Year",
-  description: "A simple and much needed movies/series filter by year and rating",
-
-  types: [ :movie, :series ],
-
-  catalogs: [
-    {
-        type: :movie,
-        id: "Best By Year",
-        extra: [
-            name: "genre",
-            options: (FIRST_YEAR..CURRENT_YEAR).to_a.map(&:to_s).reverse,
-            isRequired: true
-        ]
-    },
-    {
-        type: :series,
-        id: "Hello, Ruby",
-        extra: [
-            name: "genre",
-            options: (FIRST_YEAR..CURRENT_YEAR).to_a.map(&:to_s).reverse,
-            isRequired: true
-        ]
-    }
-  ],
-
-  resources: [
-    "catalog"
-  ]
-}
+# The manifest is built per-request (see Manifest#manifest) so the year list
+# stays current — a constant would freeze Time.now.year at process boot.
 
 OPTIONAL_META = [:posterShape, :background, :logo, :videos, :description, :releaseInfo, :imdbRating, :director, :cast, :dvdRelease, :released, :inTheaters, :certification, :runtime, :language, :country, :awards, :website, :isPeered]
 
@@ -77,7 +42,50 @@ class Manifest < Resource
   def call(env)
     return @app.call(env) unless env["PATH_INFO"].empty?
 
-    [200, @@headers, [ MANIFEST.to_json ]]
+    [200, @@headers, [ manifest.to_json ]]
+  end
+
+  private
+
+  def manifest
+    # rolling window: the most recent 20 years, current year first
+    current_year = Time.now.year
+    year_options = ((current_year - 20)..current_year).to_a.map(&:to_s).reverse
+
+    {
+      id: "danil0vsky.bestbyyear",
+      version: "2.0.0",
+
+      name: "Danil0vsky Best By Year",
+      description: "A simple and much needed movies/series filter by year and rating",
+
+      types: [ :movie, :series ],
+
+      catalogs: [
+        {
+            type: :movie,
+            id: "Best By Year",
+            extra: [
+                name: "genre",
+                options: year_options,
+                isRequired: true
+            ]
+        },
+        {
+            type: :series,
+            id: "Hello, Ruby",
+            extra: [
+                name: "genre",
+                options: year_options,
+                isRequired: true
+            ]
+        }
+      ],
+
+      resources: [
+        "catalog"
+      ]
+    }
   end
 end
 
@@ -103,7 +111,7 @@ class Catalog < Resource
       if res.is_a?(Net::HTTPSuccess)
           list = JSON.parse(res.body)["metas"]
       else
-          JSON.parse("[]") # failed to load catalog from Cinemeta
+          list = [] # failed to load catalog from Cinemeta
       end
       break if list.empty?
 
@@ -111,6 +119,6 @@ class Catalog < Resource
       skip += 50
     end
 
-    fulllist.sort_by { |m| m["imdbRating"].to_i || '0.0'  }.reverse
+    fulllist.sort_by { |m| m["imdbRating"].to_f }.reverse
   end
 end

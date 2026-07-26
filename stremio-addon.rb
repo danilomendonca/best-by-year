@@ -10,6 +10,48 @@ OPTIONAL_META = [:posterShape, :background, :logo, :videos, :description, :relea
 
 CINEMETA_YEAR_URL = 'https://cinemeta-catalogs.strem.io/year/catalog/%s/year/genre=%s&skip=%s.json'
 
+# In-memory, thread-safe cache for the fully-fetched, IMDB-rating-sorted catalog
+# of a single (type, year). Cinemeta can't do "year filter + rating sort" in one
+# query, so we must fetch-every-page-then-sort; caching means we pay that cost
+# once per (type, year) instead of on every request. See ROADMAP.md.
+class YearCatalogCache
+  # Past years are effectively immutable, so cache them for ~a month. The
+  # current year keeps gaining titles, so refresh it a few times a day. An
+  # empty result almost always means a transient Cinemeta failure, so keep it
+  # only briefly so it self-heals instead of freezing a bad answer for weeks.
+  CURRENT_YEAR_TTL = 6 * 60 * 60        # 6 hours
+  PAST_YEAR_TTL    = 30 * 24 * 60 * 60  # 30 days
+  EMPTY_TTL        = 60                  # 1 minute
+
+  Entry = Struct.new(:value, :expires_at)
+
+  def initialize
+    @store = {}
+    @mutex = Mutex.new
+  end
+
+  # Return the cached value for +key+, or compute it via the block and store it.
+  # The block must return [value, ttl_seconds]. Computation runs outside the
+  # lock so a slow Cinemeta fetch doesn't serialize every other request; the
+  # cost is that concurrent misses for the same key may each fetch once.
+  def fetch(key)
+    now = Time.now
+    @mutex.synchronize do
+      entry = @store[key]
+      return entry.value if entry && entry.expires_at > now
+    end
+
+    value, ttl = yield
+
+    @mutex.synchronize do
+      @store[key] = Entry.new(value, Time.now + ttl)
+    end
+    value
+  end
+end
+
+CATALOG_CACHE = YearCatalogCache.new
+
 class NotFound
   def call(env)
     [404, {"Content-Type" => "text/plain"}, ["404 Not Found"]]
@@ -47,14 +89,19 @@ class Manifest < Resource
 
   private
 
+  # Oldest year offered in the dropdown. Older years are the *smallest*
+  # Cinemeta catalogs (1985 ≈ 232 movies vs 2024 ≈ 712) so they fetch faster,
+  # and with per-year caching the length of this list is essentially free.
+  EARLIEST_YEAR = 1980
+
   def manifest
-    # rolling window: the most recent 20 years, current year first
+    # window from EARLIEST_YEAR through the current year, current year first
     current_year = Time.now.year
-    year_options = ((current_year - 20)..current_year).to_a.map(&:to_s).reverse
+    year_options = (EARLIEST_YEAR..current_year).to_a.map(&:to_s).reverse
 
     {
       id: "danil0vsky.bestbyyear",
-      version: "2.0.0",
+      version: "2.2.0",
 
       name: "Danil0vsky Best By Year",
       description: "A simple and much needed movies/series filter by year and rating",
@@ -90,19 +137,52 @@ class Manifest < Resource
 end
 
 class Catalog < Resource
+  # How many items we return per catalog response. Stremio pages by advancing
+  # +skip+ by the size of the page it received, so it walks the cached list in
+  # PAGE_SIZE-sized steps until it gets a short (or empty) page.
+  PAGE_SIZE = 100
+
+  def initialize(app, cache: CATALOG_CACHE)
+    super(app)
+    @cache = cache
+  end
+
   def call(env)
     args = parse_request(env)
     # extract year and skip from extraArgs, e.g.: genre=2024&skip=44
     firstArgs = args[:extraArgs].first
     year = firstArgs&.match(/genre=(\d+)/)&.captures&.first || Time.now.year.to_s
-    skip = firstArgs&.match(/skip=(\d+)/)&.captures&.first || 0
-    catalog = {metas: best_by_year(args[:type], year)}
+    skip = (firstArgs&.match(/skip=(\d+)/)&.captures&.first || 0).to_i
+
+    page = best_by_year(args[:type], year).slice(skip, PAGE_SIZE) || []
+    catalog = {metas: page}
 
     [200, @@headers, [catalog.to_json]]
   end
 
+  # The full, rating-sorted list for (type, year), served from cache when warm.
   def best_by_year(type, year=Time.now.year.to_s)
-    # iterate over the catalog until we get all the items, 44 at a time, until we get an empty list
+    @cache.fetch([type, year]) do
+      list = fetch_sorted(type, year)
+      [list, ttl_for(year, list)]
+    end
+  end
+
+  private
+
+  def ttl_for(year, list)
+    return YearCatalogCache::EMPTY_TTL if list.empty?
+
+    if year == Time.now.year.to_s
+      YearCatalogCache::CURRENT_YEAR_TTL
+    else
+      YearCatalogCache::PAST_YEAR_TTL
+    end
+  end
+
+  # Fetch every Cinemeta page for the year and sort by IMDB rating, best first.
+  def fetch_sorted(type, year)
+    # iterate over the catalog until we get all the items, 50 at a time, until we get an empty list
     fulllist = []
     skip = 0
     loop do
@@ -113,7 +193,7 @@ class Catalog < Resource
       else
           list = [] # failed to load catalog from Cinemeta
       end
-      break if list.empty?
+      break if list.nil? || list.empty?
 
       fulllist += list
       skip += 50

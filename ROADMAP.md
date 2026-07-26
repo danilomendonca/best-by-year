@@ -6,10 +6,16 @@ for a project this size.
 
 ## Planned improvements
 
-### Cache the sorted per-year catalog (+ real pagination)
-**Priority:** high · **Why:** the addon currently re-fetches every Cinemeta
-page and re-sorts on *every* request, then returns the whole list at once
+### Cache the sorted per-year catalog (+ real pagination) — ✅ done (v2.1.0)
+**Priority:** high · **Why:** the addon *used to* re-fetch every Cinemeta page
+and re-sort on *every* request, then return the whole list at once
 (`best_by_year` in `stremio-addon.rb`).
+
+**Status:** implemented. `YearCatalogCache` caches the rating-sorted array
+keyed by `(type, year)` with TTL by year (current year 6h, past years 30d,
+empty/failed fetches 1min so they self-heal); `Catalog#call` honors `skip` and
+slices the cached array into `PAGE_SIZE` (100) pages. Original notes kept below
+for context.
 
 Cinemeta has no single query for "year filter + IMDB-rating sort" — confirmed
 from its manifest: the `year` catalog is sorted by recency, and the
@@ -47,14 +53,15 @@ Approach:
 Keeps IMDB ratings and Cinemeta `tt` ids unchanged — no behavioural change for
 users, just faster and lighter.
 
-### Optionally widen the year range (safe, low value without caching)
-The manifest currently offers a rolling 20-year window
-(`(current_year - 20)..current_year`). Extending it back into the 90s/80s is
-**performance-safe**: the dropdown length is free (manifest is built per
-request, trivially), and older years are the *smallest* catalogs (1985 ≈ 232
-movies vs 2024 ≈ 712), so they fetch faster than recent years. Worst case stays
-the recent years already served. Do this only alongside the caching work above —
-otherwise it just adds more slow-to-load years.
+### Widen the year range — ✅ done (v2.2.0)
+The manifest *used to* offer a rolling 20-year window
+(`(current_year - 20)..current_year`). Now it offers `EARLIEST_YEAR` (1980)
+through the current year. This is **performance-safe**: the dropdown length is
+free (manifest is built per request, trivially), and older years are the
+*smallest* catalogs (1985 ≈ 232 movies vs 2024 ≈ 712), so they fetch faster
+than recent years. Worst case stays the recent years already served, and the
+caching work above keeps repeat loads cheap. Adjust `EARLIEST_YEAR` in
+`stremio-addon.rb` to go further back.
 
 ## Ideas / alternatives considered
 
@@ -74,6 +81,7 @@ acceptable.
 
 ## Known issues / tech debt
 
-- **Manifest `version` is frozen at `2.0.0`** — Stremio may serve a cached
-  addon when the version doesn't change. Bump the version on user-visible
-  changes so clients pick up updates without a manual remove/re-add.
+- **Bump manifest `version` on user-visible changes** — Stremio may serve a
+  cached addon when the version doesn't change. (Bumped to `2.1.0` for the
+  caching + pagination work.) Keep bumping it so clients pick up updates
+  without a manual remove/re-add.

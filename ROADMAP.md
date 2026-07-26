@@ -17,6 +17,26 @@ from its manifest: the `year` catalog is sorted by recency, and the
 fetch-all-then-resort is the only way to get the desired result from Cinemeta,
 and the fix is to stop paying that cost on every request.
 
+**Measured impact (2026-07-26, live app, one sample each).** Selecting a year
+is slow and *highly variable* — the latency is dominated by Cinemeta's per-page
+response time, not by our item count:
+
+| Year | Movies | ~page-fetches (50/page) | End-to-end |
+|------|--------|-------------------------|------------|
+| 1985 | 232 | ~5 | 10.2s *(incl. cold start)* |
+| 1995 | 342 | ~7 | 11.6s |
+| 2005 | 621 | ~13 | 75.3s |
+| 2015 | — | — | **>90s (timed out)** |
+| 2024 | 712 | ~15 | 28.8s |
+
+Takeaways:
+- Latency does **not** track item count (2005 with 621 items took 75s; 2024
+  with 712 took 29s) — the variance is upstream Cinemeta latency amplified by
+  sequential paging.
+- Some years already exceed ~90s, which almost certainly exceeds Stremio's
+  client patience → the catalog appears to fail to load. This is a real,
+  present bug for slow years, independent of the year range offered.
+
 Approach:
 - Cache the sorted array keyed by `(type, year)`.
 - TTL by year: past years are effectively immutable (cache ~indefinitely);
@@ -26,6 +46,15 @@ Approach:
 
 Keeps IMDB ratings and Cinemeta `tt` ids unchanged — no behavioural change for
 users, just faster and lighter.
+
+### Optionally widen the year range (safe, low value without caching)
+The manifest currently offers a rolling 20-year window
+(`(current_year - 20)..current_year`). Extending it back into the 90s/80s is
+**performance-safe**: the dropdown length is free (manifest is built per
+request, trivially), and older years are the *smallest* catalogs (1985 ≈ 232
+movies vs 2024 ≈ 712), so they fetch faster than recent years. Worst case stays
+the recent years already served. Do this only alongside the caching work above —
+otherwise it just adds more slow-to-load years.
 
 ## Ideas / alternatives considered
 
